@@ -1,9 +1,11 @@
 # Gateway и Ledger
 
-Два независимых Go-модуля в одном репозитории:
+Домашнее задание 2. Два независимых Go-модуля в папке `homework2`:
 
 - `gateway` — HTTP-шлюз
 - `ledger` — бизнес-логика финансовых транзакций (пока без сетевого сервера)
+
+Команды ниже запускаются из корня репозитория.
 
 ## Требования
 
@@ -14,7 +16,7 @@
 HTTP-сервер на порту `8080`. `GET /ping` возвращает `pong` со статусом `200 OK`.
 
 ```powershell
-cd gateway
+cd homework2/gateway
 go run .
 ```
 
@@ -31,7 +33,7 @@ curl http://localhost:8080/ping
 Сервис печатает `Ledger service started`, добавляет три тестовые транзакции в память и выводит их список.
 
 ```powershell
-cd ledger
+cd homework2/ledger
 go run .
 ```
 
