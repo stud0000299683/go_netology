@@ -1,15 +1,13 @@
 # go_netology
 
-Homework 5: HTTP-шлюз вызывает функции модуля Ledger. Транзакции и бюджеты хранятся в памяти.
-
-Задания 2–4 лежат в папках `homework2`, `homework3` и `homework4`.
+Homework 6: HTTP-шлюз вызывает функции модуля Ledger. Транзакции и бюджеты хранятся в памяти. Предыдущие задания лежат в папках `homework2`–`homework5`.
 
 ## Запуск
 
 Нужен Go 1.22 или новее. Команды выполняются из корня репозитория.
 
 ```powershell
-cd homework5/gateway
+cd homework6/gateway
 go run .
 ```
 
@@ -49,3 +47,15 @@ curl http://localhost:8080/api/transactions
 ```powershell
 curl http://localhost:8080/api/budgets
 ```
+
+## Тесты
+
+Команды выполняются из папки `homework6`. Файл `go.work` объединяет модули `gateway` и `ledger`.
+
+```powershell
+cd homework6
+go test ./gateway/... ./ledger/... -cover -coverprofile=cover.out
+go tool cover -html=cover.out -o cover.html
+```
+
+Покрытие тестами ~90%. Пакет `ledger` покрыт полностью, HTTP-слой Gateway — примерно на 93%. `ledger.Reset()` очищает память перед каждым сценарием.
