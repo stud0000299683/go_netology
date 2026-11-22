@@ -1,51 +1,88 @@
 # go_netology
 
-Homework 10: пакетный импорт расходов идёт через каналы и пул воркеров. Сводка по категориям по-прежнему считается параллельно и прерывается по таймауту запроса. Задания 2–9 лежат в папках `homework2`–`homework9`.
+Homework 11: Gateway и Ledger собираются в Docker. Gateway запускается через Docker Compose вместе с PostgreSQL и Redis, Ledger пока остаётся библиотекой внутри Gateway. Задания 2–10 лежат в папках `homework2`–`homework10`.
 
 Нужен Go 1.26 или новее и утилита [Goose](https://github.com/pressly/goose).
 
 ## Слои Ledger
 
-- `homework10/ledger/internal/domain` — транзакция, бюджет, валидация и интерфейсы репозиториев
-- `homework10/ledger/internal/repository/pg` — SQL для PostgreSQL
-- `homework10/ledger/internal/service` — лимит категории, параллельный отчёт, пакетный импорт и кеш Redis
-- `homework10/ledger/internal/app` — чтение окружения, подключение к базе и Redis, сборка сервиса
+- `homework11/ledger/internal/domain` — транзакция, бюджет, валидация и интерфейсы репозиториев
+- `homework11/ledger/internal/repository/pg` — SQL для PostgreSQL
+- `homework11/ledger/internal/service` — лимит категории, параллельный отчёт, пакетный импорт и кеш Redis
+- `homework11/ledger/internal/app` — чтение окружения, подключение к базе и Redis, сборка сервиса
 
 `ledger.New(ctx)` возвращает сервис, функцию закрытия соединений и ошибку. Миграции эта функция не запускает. В Gateway `main` вызывает её и передаёт сервис в `api.New`.
 
-## База данных и Redis
+## Сборка образов
+
+Контекст Gateway — каталог `homework11`, потому что модуль `ledger` подключается через `replace`. Образ Ledger собирается из своего модуля и в compose не запускается.
 
 ```powershell
-docker run -d --name cashapp-postgres -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=cashapp -p 5432:5432 postgres:16-alpine
-docker run -d --name cashcraft-redis -p 6379:6379 redis:7-alpine
+docker build -f homework11/gateway/Dockerfile -t cashapp-gateway homework11
+docker build -f homework11/ledger/Dockerfile -t cashapp-ledger homework11/ledger
+```
+
+Проверка Gateway отдельно, когда база из compose уже запущена:
+
+```powershell
+docker run --rm --network cashapp_default -p 8080:8080 -e DATABASE_URL=postgres://postgres:postgres@db:5432/cashapp?sslmode=disable -e REDIS_ADDR=redis:6379 cashapp-gateway
+```
+
+`GET http://localhost:8080/ping` отвечает `pong`.
+
+## Docker Compose
+
+Файл `docker-compose.yml` в корне репозитория. Сервисы:
+
+- `db` — `postgres:16-alpine`, база `cashapp`, пользователь и пароль `postgres`, том `pgdata`, проверка `pg_isready`
+- `redis` — кеш отчётов; без него текущий Gateway не стартует
+- `gateway` — сборка `homework11/gateway/Dockerfile`, порт `8080:8080`, ждёт здоровые `db` и `redis`, сам проверяется через `wget http://localhost:8080/ping`
+
+Переменные Gateway:
+
+- `DATABASE_URL=postgres://postgres:postgres@db:5432/cashapp?sslmode=disable` — хост `db` это имя сервиса в сети compose
+- `REDIS_ADDR=redis:6379`
+- необязательный `REQUEST_TIMEOUT`, по умолчанию `2s`
+
+С хоста к базе подключаются через проброшенный порт `localhost:5432`.
+
+### Запуск
+
+```powershell
+docker compose up -d db redis
+docker compose ps
+```
+
+Дождитесь статуса `healthy` у `db`. Затем миграции Goose, до старта Gateway:
+
+```powershell
 $env:DATABASE_URL = "postgres://postgres:postgres@localhost:5432/cashapp?sslmode=disable"
-goose -dir ./homework10/ledger/migrations postgres $env:DATABASE_URL up
+go run github.com/pressly/goose/v3/cmd/goose@v3.24.3 -dir ./homework11/ledger/migrations postgres $env:DATABASE_URL up
+docker compose up -d gateway
+docker compose ps
 ```
 
-Откат:
+У Gateway в `docker compose ps` должен появиться статус `healthy`.
+
+Остановка:
 
 ```powershell
-goose -dir ./homework10/ledger/migrations postgres $env:DATABASE_URL down
+docker compose stop
 ```
 
-Если `DATABASE_URL` не задана, адрес собирается из `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS` и `DB_NAME`. По умолчанию это `localhost:5432`, пользователь `postgres`, пароль `postgres`, база `cashapp`. Redis: `REDIS_ADDR` (`localhost:6379`), `REDIS_DB` (`0`), необязательный `REDIS_PASSWORD`.
+Полная остановка с удалением контейнеров, без тома базы: `docker compose down`. Вместе с данными: `docker compose down -v`.
 
-## Запуск
+Откат миграции:
 
 ```powershell
-cd homework10/ledger
-go run ./cmd/ledger
+goose -dir ./homework11/ledger/migrations postgres $env:DATABASE_URL down
 ```
 
-```powershell
-cd homework10/gateway
-go run .
-```
-
-В обоих процессах должны быть заданы `DATABASE_URL` и `REDIS_ADDR`. При ошибке подключения процесс пишет причину и завершается. Gateway слушает `http://localhost:8080`.
+Если `DATABASE_URL` не задана при локальном `go run`, адрес собирается из `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS` и `DB_NAME`. По умолчанию это `localhost:5432`, пользователь `postgres`, пароль `postgres`, база `cashapp`. Redis: `REDIS_ADDR` (`localhost:6379`), `REDIS_DB` (`0`), необязательный `REDIS_PASSWORD`.
 
 ## Эндпоинты
 
+- `GET /ping` — проверка контейнера, ответ `pong`
 - `POST /api/budgets` — создать или обновить бюджет, ответ `201`
 - `GET /api/budgets` — список бюджетов, ответ `200` или `[]`
 - `POST /api/transactions` — создать расход, ответ `201`; неверные данные — `400`; превышение лимита — `409` и `{"error":"budget exceeded"}`
@@ -58,6 +95,7 @@ go run .
 ## Примеры
 
 ```powershell
+curl http://localhost:8080/ping
 curl -X POST http://localhost:8080/api/budgets -H "Content-Type: application/json" -d "{\"category\":\"еда\",\"limit\":5000}"
 curl -X POST http://localhost:8080/api/transactions -H "Content-Type: application/json" -d "{\"amount\":450,\"category\":\"еда\",\"description\":\"ланч\",\"date\":\"2025-09-10\"}"
 curl http://localhost:8080/api/budgets
@@ -100,6 +138,6 @@ Ledger кладёт элементы в канал заданий. Воркер�
 Проверки валидации, правила бюджета, формата отчёта и таймаута не требуют запущенной базы.
 
 ```powershell
-cd homework10
+cd homework11
 go test -race ./gateway/... ./ledger/...
 ```
